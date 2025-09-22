@@ -69,52 +69,65 @@ class DayCameraGUI:
         self.day_sink.connect("new-sample", self._on_sample)
 
     def _run_pipeline_loop(self, pipeline_str):
-        self.stop_stream()  # just in case
-        self.day_streaming = True
-        self.day_imgtk = None
-
         try:
-            self.day_pipeline = Gst.parse_launch(pipeline_str)
-            self.day_sink = self.day_pipeline.get_by_name("sink")
-            self.day_sink.set_property("emit-signals", False)
-            self.day_sink.set_property("max-buffers", 1)
-            self.day_sink.set_property("drop", True)
-            self.day_pipeline.set_state(Gst.State.PLAYING)
+            self.stop_stream()  # just in case
+            self.day_streaming = True
+            self.day_imgtk = None
+
+            try:
+                self.day_pipeline = Gst.parse_launch(pipeline_str)
+                self.day_sink = self.day_pipeline.get_by_name("sink")
+                self.day_sink.set_property("emit-signals", False)
+                self.day_sink.set_property("max-buffers", 1)
+                self.day_sink.set_property("drop", True)
+                self.day_pipeline.set_state(Gst.State.PLAYING)
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(f"Pipeline error: {e}"))
+                return
+
+            # Loop pulling frames
+            def pull_frames():
+                while self.day_streaming and self.day_pipeline:
+                    sample = self.day_sink.emit("try-pull-sample", 0)  # non-blocking
+                    if sample:
+                        buf = sample.get_buffer()
+                        caps = sample.get_caps()
+                        try:
+                            w = caps.get_structure(0).get_value("width")
+                            h = caps.get_structure(0).get_value("height")
+                        except:
+                            w, h = 640, 480
+
+                        data = buf.extract_dup(0, buf.get_size())
+                        arr = np.frombuffer(data, np.uint8)
+
+                        if arr.size == (h * w):  # grayscale
+                            arr = arr.reshape((h, w))
+                            arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+                        else:
+                            arr = arr.reshape((h, w, 3))
+
+                        rgb = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                        rgb = cv2.resize(rgb, (self.video_frame.winfo_width() or 640,
+                                            self.video_frame.winfo_height() or 480))
+                        img = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+
+                        # Update GUI safely
+                        self.root.after(0, lambda img=img: self._update_image(img))
+
+                    time.sleep(0.01)
         except Exception as e:
-            self.root.after(0, lambda: self._set_status(f"Pipeline error: {e}"))
-            return
-
-        # Loop pulling frames
-        def pull_frames():
-            while self.day_streaming and self.day_pipeline:
-                sample = self.day_sink.emit("try-pull-sample", 0)  # non-blocking
-                if sample:
-                    buf = sample.get_buffer()
-                    caps = sample.get_caps()
-                    try:
-                        w = caps.get_structure(0).get_value("width")
-                        h = caps.get_structure(0).get_value("height")
-                    except:
-                        w, h = 640, 480
-
-                    data = buf.extract_dup(0, buf.get_size())
-                    arr = np.frombuffer(data, np.uint8)
-
-                    if arr.size == (h * w):  # grayscale
-                        arr = arr.reshape((h, w))
-                        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
-                    else:
-                        arr = arr.reshape((h, w, 3))
-
-                    rgb = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-                    rgb = cv2.resize(rgb, (self.video_frame.winfo_width() or 640,
-                                        self.video_frame.winfo_height() or 480))
-                    img = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
-
-                    # Update GUI safely
-                    self.root.after(0, lambda img=img: self._update_image(img))
-
-                time.sleep(0.01)
+            print(f"Error in pipeline loop: {e}")
+        finally:
+            self.day_streaming = False
+            if self.day_pipeline:
+                try:
+                    self.day_pipeline.set_state(Gst.State.NULL)
+                except Exception:
+                    pass
+                self.day_pipeline = None
+                self.day_sink = None
+            self.root.after(0, lambda: self._set_status("Stream stopped."))
 
         threading.Thread(target=pull_frames, daemon=True).start()
 
