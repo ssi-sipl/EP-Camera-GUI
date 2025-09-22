@@ -117,17 +117,8 @@ class DayCameraGUI:
 
                     time.sleep(0.01)
         except Exception as e:
-            print(f"Error in pipeline loop: {e}")
-        finally:
-            self.day_streaming = False
-            if self.day_pipeline:
-                try:
-                    self.day_pipeline.set_state(Gst.State.NULL)
-                except Exception:
-                    pass
-                self.day_pipeline = None
-                self.day_sink = None
-            self.root.after(0, lambda: self._set_status("Stream stopped."))
+            print(f"Error in pipeline loop: {e}")   
+            pass
 
         threading.Thread(target=pull_frames, daemon=True).start()
 
