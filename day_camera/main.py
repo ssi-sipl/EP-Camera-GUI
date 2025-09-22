@@ -108,18 +108,31 @@ class DayCameraGUI:
 
     # ---------------- Controls ----------------
     def start_bw(self):
-        self.stop_stream()
-        pipeline = (
-            "aravissrc ! "
-            "video/x-raw,format=GRAY8,width=1280,height=720,framerate=30/1 ! "
-            "videoconvert ! "
-            "appsink name=sink"
-        )
-        self._setup_pipeline(pipeline)
-        self.day_pipeline.set_state(Gst.State.PLAYING)
+        self.stop_stream()  # stop any existing
+        self._set_status("Starting B/W stream...")
+        
+        # Step 1: Optimistic UI update
         self.day_streaming = True
         self.day_colour_running = False
-        self._set_status("B/W stream started.")
+        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
+
+        # Step 2: Run pipeline in background
+        def worker():
+            try:
+                pipeline = (
+                    "aravissrc ! "
+                    "video/x-raw,format=GRAY8,width=1280,height=720,framerate=30/1 ! "
+                    "videoconvert ! "
+                    "appsink name=sink"
+                )
+                self._setup_pipeline(pipeline)
+                self.day_pipeline.set_state(Gst.State.PLAYING)
+                self.root.after(0, lambda: self._set_status("B/W stream started."))
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(f"B/W start error: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
     def start_color(self):
         self.stop_stream()
