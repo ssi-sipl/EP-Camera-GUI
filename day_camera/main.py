@@ -136,17 +136,28 @@ class DayCameraGUI:
 
     def start_color(self):
         self.stop_stream()
-        pipeline = (
-            "aravissrc ! "
-            "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
-            "videoconvert ! "
-            "appsink name=sink"
-        )
-        self._setup_pipeline(pipeline)
-        self.day_pipeline.set_state(Gst.State.PLAYING)
+        self._set_status("Starting Color stream...")
+        
         self.day_streaming = True
         self.day_colour_running = True
-        self._set_status("Color stream started.")
+        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
+
+        def worker():
+            try:
+                pipeline = (
+                    "aravissrc ! "
+                    "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
+                    "videoconvert ! "
+                    "appsink name=sink"
+                )
+                self._setup_pipeline(pipeline)
+                self.day_pipeline.set_state(Gst.State.PLAYING)
+                self.root.after(0, lambda: self._set_status("Color stream started."))
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(f"Color start error: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
     def stop_stream(self):
         """Stop day camera stream without blocking the UI"""
@@ -157,6 +168,7 @@ class DayCameraGUI:
         # Step 1: Update flags and UI immediately
         self.day_streaming = False
         self.day_colour_running = False
+        self.day_imgtk = None  # <--- RESET PhotoImage here!
         if PIL_AVAILABLE:
             self.video_label.config(image="", text="Stopped", fg="white", bg="black")
         self._set_status("Stopping stream...")
@@ -173,6 +185,7 @@ class DayCameraGUI:
             self.root.after(0, lambda: self._set_status("Stream stopped."))
 
         threading.Thread(target=worker, daemon=True).start()
+
 
     def _set_status(self, msg):
         self.status_var.set(msg)
