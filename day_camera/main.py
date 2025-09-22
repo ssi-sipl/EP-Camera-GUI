@@ -96,7 +96,7 @@ class DayCameraGUI:
                             w = caps.get_structure(0).get_value("width")
                             h = caps.get_structure(0).get_value("height")
                         except:
-                            w, h = 640, 480
+                            w, h = 1280, 720
 
                         data = buf.extract_dup(0, buf.get_size())
                         arr = np.frombuffer(data, np.uint8)
