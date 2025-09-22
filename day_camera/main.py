@@ -114,13 +114,13 @@ class DayCameraGUI:
 
     # ---------------- Controls ----------------
     def start_bw(self):
-        if self.day_pipeline:
-            # Resume paused pipeline
-            self.day_streaming = True
-            self.day_colour_running = False
-            self.day_pipeline.set_state(Gst.State.PLAYING)
-            self._set_status("B/W stream resumed.")
-            return
+        self.stop_stream()  # stop any existing
+        self._set_status("Starting B/W stream...")
+        
+        # Step 1: Optimistic UI update
+        self.day_streaming = True
+        self.day_colour_running = False
+        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
 
         # Step 2: Run pipeline in background
         def worker():
@@ -141,13 +141,13 @@ class DayCameraGUI:
 
 
     def start_color(self):
-        if self.day_pipeline:
-            self.day_streaming = True
-            self.day_colour_running = True
-            self.day_pipeline.set_state(Gst.State.PLAYING)
-            self._set_status("Color stream resumed.")
-            return
+        self.stop_stream()
+        self._set_status("Starting Color stream...")
         
+        self.day_streaming = True
+        self.day_colour_running = True
+        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
+
         def worker():
             try:
                 pipeline = (
@@ -166,7 +166,7 @@ class DayCameraGUI:
 
 
     def stop_stream(self):
-        """Pause the day camera stream without destroying the pipeline"""
+        """Stop day camera stream without blocking the UI"""
         if not self.day_streaming and not self.day_colour_running:
             self._set_status("Stream not running.")
             return
@@ -174,21 +174,23 @@ class DayCameraGUI:
         # Step 1: Update flags and UI immediately
         self.day_streaming = False
         self.day_colour_running = False
+        self.day_imgtk = None  # <--- RESET PhotoImage here!
         if PIL_AVAILABLE:
-            self.video_label.config(text="Paused", image="", fg="white", bg="black")
-        self._set_status("Pausing stream...")
+            self.video_label.config(image="", text="Stopped", fg="white", bg="black")
+        self._set_status("Stopping stream...")
 
-        # Step 2: Pause pipeline in background thread
+        # Step 2: Stop pipeline in a background thread
         def worker():
             if self.day_pipeline:
                 try:
-                    self.day_pipeline.set_state(Gst.State.PAUSED)
+                    self.day_pipeline.set_state(Gst.State.NULL)
                 except Exception:
                     pass
-            self.root.after(0, lambda: self._set_status("Stream paused."))
+                self.day_pipeline = None
+                self.day_sink = None
+            self.root.after(0, lambda: self._set_status("Stream stopped."))
 
         threading.Thread(target=worker, daemon=True).start()
-
 
 
     def _set_status(self, msg):
