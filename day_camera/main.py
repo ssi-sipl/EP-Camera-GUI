@@ -11,6 +11,7 @@ from tkinter import ttk
 import numpy as np
 import cv2
 import time
+import threading
 
 try:
     from PIL import Image, ImageTk
@@ -135,16 +136,30 @@ class DayCameraGUI:
         self._set_status("Color stream started.")
 
     def stop_stream(self):
-        if self.day_pipeline:
-            try:
-                self.day_pipeline.set_state(Gst.State.NULL)
-            except Exception:
-                pass
+        """Stop day camera stream without blocking the UI"""
+        if not self.day_streaming and not self.day_colour_running:
+            self._set_status("Stream not running.")
+            return
+
+        # Step 1: Update flags and UI immediately
         self.day_streaming = False
         self.day_colour_running = False
         if PIL_AVAILABLE:
             self.video_label.config(image="", text="Stopped", fg="white", bg="black")
-        self._set_status("Stream stopped.")
+        self._set_status("Stopping stream...")
+
+        # Step 2: Stop pipeline in a background thread
+        def worker():
+            if self.day_pipeline:
+                try:
+                    self.day_pipeline.set_state(Gst.State.NULL)
+                except Exception:
+                    pass
+                self.day_pipeline = None
+                self.day_sink = None
+            self.root.after(0, lambda: self._set_status("Stream stopped."))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _set_status(self, msg):
         self.status_var.set(msg)
