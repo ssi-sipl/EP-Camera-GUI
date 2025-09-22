@@ -68,101 +68,90 @@ class DayCameraGUI:
         self.day_sink.set_property("drop", True)
         self.day_sink.connect("new-sample", self._on_sample)
 
-    def _on_sample(self, sink):
-        sample = sink.emit("pull-sample")
-        if sample is None:
-            return Gst.FlowReturn.OK
+    def _run_pipeline_loop(self, pipeline_str):
+        self.stop_stream()  # just in case
+        self.day_streaming = True
+        self.day_imgtk = None
 
-        buf = sample.get_buffer()
-        caps = sample.get_caps()
         try:
-            w = caps.get_structure(0).get_value("width")
-            h = caps.get_structure(0).get_value("height")
-        except Exception:
-            w, h = 640, 480
+            self.day_pipeline = Gst.parse_launch(pipeline_str)
+            self.day_sink = self.day_pipeline.get_by_name("sink")
+            self.day_sink.set_property("emit-signals", False)
+            self.day_sink.set_property("max-buffers", 1)
+            self.day_sink.set_property("drop", True)
+            self.day_pipeline.set_state(Gst.State.PLAYING)
+        except Exception as e:
+            self.root.after(0, lambda: self._set_status(f"Pipeline error: {e}"))
+            return
 
-        data = buf.extract_dup(0, buf.get_size())
-        arr = np.frombuffer(data, np.uint8)
+        # Loop pulling frames
+        def pull_frames():
+            while self.day_streaming and self.day_pipeline:
+                sample = self.day_sink.emit("try-pull-sample", 0)  # non-blocking
+                if sample:
+                    buf = sample.get_buffer()
+                    caps = sample.get_caps()
+                    try:
+                        w = caps.get_structure(0).get_value("width")
+                        h = caps.get_structure(0).get_value("height")
+                    except:
+                        w, h = 640, 480
 
-        if arr.size == (h * w):  # grayscale
-            arr = arr.reshape((h, w))
-            arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+                    data = buf.extract_dup(0, buf.get_size())
+                    arr = np.frombuffer(data, np.uint8)
+
+                    if arr.size == (h * w):  # grayscale
+                        arr = arr.reshape((h, w))
+                        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+                    else:
+                        arr = arr.reshape((h, w, 3))
+
+                    rgb = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                    rgb = cv2.resize(rgb, (self.video_frame.winfo_width() or 640,
+                                        self.video_frame.winfo_height() or 480))
+                    img = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+
+                    # Update GUI safely
+                    self.root.after(0, lambda img=img: self._update_image(img))
+
+                time.sleep(0.01)
+
+        threading.Thread(target=pull_frames, daemon=True).start()
+
+    def _update_image(self, img):
+        if self.day_imgtk is None:
+            self.day_imgtk = ImageTk.PhotoImage(img)
+            self.video_label.config(image=self.day_imgtk, text="")
         else:
-            arr = arr.reshape((h, w, 3))
-
-        rgb = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-        rgb = cv2.resize(rgb, (self.video_frame.winfo_width() or 640,
-                            self.video_frame.winfo_height() or 480))
-        
-        img = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
-
-        # Schedule the GUI update in the main thread
-        def update_gui():
-            if self.day_imgtk is None:
+            try:
+                self.day_imgtk.paste(img)
+            except Exception:
                 self.day_imgtk = ImageTk.PhotoImage(img)
                 self.video_label.config(image=self.day_imgtk, text="")
-            else:
-                try:
-                    self.day_imgtk.paste(img)
-                except Exception:
-                    self.day_imgtk = ImageTk.PhotoImage(img)
-                    self.video_label.config(image=self.day_imgtk, text="")
 
-        self.root.after(0, update_gui)
-        return Gst.FlowReturn.OK
 
 
     # ---------------- Controls ----------------
     def start_bw(self):
-        self.stop_stream()  # stop any existing
         self._set_status("Starting B/W stream...")
-        
-        # Step 1: Optimistic UI update
-        self.day_streaming = True
-        self.day_colour_running = False
-        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
-
-        # Step 2: Run pipeline in background
-        def worker():
-            try:
-                pipeline = (
-                    "aravissrc ! "
-                    "video/x-raw,format=GRAY8,width=1280,height=720,framerate=30/1 ! "
-                    "videoconvert ! "
-                    "appsink name=sink"
-                )
-                self._setup_pipeline(pipeline)
-                self.day_pipeline.set_state(Gst.State.PLAYING)
-                self.root.after(0, lambda: self._set_status("B/W stream started."))
-            except Exception as e:
-                self.root.after(0, lambda: self._set_status(f"B/W start error: {e}"))
-
-        threading.Thread(target=worker, daemon=True).start()
+        pipeline = (
+            "aravissrc ! "
+            "video/x-raw,format=GRAY8,width=1280,height=720,framerate=30/1 ! "
+            "videoconvert ! "
+            "appsink name=sink"
+        )
+        threading.Thread(target=lambda: self._run_pipeline_loop(pipeline), daemon=True).start()
 
 
     def start_color(self):
-        self.stop_stream()
         self._set_status("Starting Color stream...")
-        
-        self.day_streaming = True
-        self.day_colour_running = True
-        self.video_label.config(image="", text="Starting...", fg="yellow", bg="black")
-
-        def worker():
-            try:
-                pipeline = (
-                    "aravissrc ! "
-                    "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
-                    "videoconvert ! "
-                    "appsink name=sink"
-                )
-                self._setup_pipeline(pipeline)
-                self.day_pipeline.set_state(Gst.State.PLAYING)
-                self.root.after(0, lambda: self._set_status("Color stream started."))
-            except Exception as e:
-                self.root.after(0, lambda: self._set_status(f"Color start error: {e}"))
-
-        threading.Thread(target=worker, daemon=True).start()
+        pipeline = (
+            "aravissrc ! "
+            "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
+            "videoconvert ! "
+            "appsink name=sink"
+        )
+        threading.Thread(target=lambda: self._run_pipeline_loop(pipeline), daemon=True).start()
 
 
     def stop_stream(self):
