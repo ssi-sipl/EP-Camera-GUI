@@ -72,6 +72,7 @@ class DayCameraGUI:
         sample = sink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.OK
+
         buf = sample.get_buffer()
         caps = sample.get_caps()
         try:
@@ -91,20 +92,25 @@ class DayCameraGUI:
 
         rgb = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
         rgb = cv2.resize(rgb, (self.video_frame.winfo_width() or 640,
-                               self.video_frame.winfo_height() or 480))
-
+                            self.video_frame.winfo_height() or 480))
+        
         img = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
-        if self.day_imgtk is None:
-            self.day_imgtk = ImageTk.PhotoImage(img)
-            self.video_label.config(image=self.day_imgtk)
-        else:
-            try:
-                self.day_imgtk.paste(img)
-            except Exception:
-                self.day_imgtk = ImageTk.PhotoImage(img)
-                self.video_label.config(image=self.day_imgtk)
 
+        # Schedule the GUI update in the main thread
+        def update_gui():
+            if self.day_imgtk is None:
+                self.day_imgtk = ImageTk.PhotoImage(img)
+                self.video_label.config(image=self.day_imgtk, text="")
+            else:
+                try:
+                    self.day_imgtk.paste(img)
+                except Exception:
+                    self.day_imgtk = ImageTk.PhotoImage(img)
+                    self.video_label.config(image=self.day_imgtk, text="")
+
+        self.root.after(0, update_gui)
         return Gst.FlowReturn.OK
+
 
     # ---------------- Controls ----------------
     def start_bw(self):
